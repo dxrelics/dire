@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import nodemailer from "nodemailer";
 
 // Inisialisasi Supabase client
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -11,30 +12,28 @@ if (!supabaseUrl || !supabaseServiceKey) {
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-// Fungsi untuk mengirim email menggunakan Resend
+// Setup Nodemailer transporter menggunakan Gmail SMTP
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// Fungsi untuk mengirim email menggunakan Nodemailer
 async function sendEmail(to: string, subject: string, html: string) {
-  const resendApiKey = process.env.RESEND_API_KEY;
+  const mailOptions = {
+    from: "Dire Tracksuit <your.email@gmail.com>", // Ganti dengan email kamu
+    to,
+    subject,
+    html,
+  };
 
-  if (!resendApiKey) {
-    throw new Error("Missing Resend API key. Please check RESEND_API_KEY in .env.local");
-  }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${resendApiKey}`,
-    },
-    body: JSON.stringify({
-      from: "Dire Tracksuit <no-reply@yourdomain.com>", // Ganti dengan domain email kamu
-      to,
-      subject,
-      html,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to send email via Resend");
+  try {
+    await transporter.sendMail(mailOptions);
+  } catch (error) {
+    throw new Error("Failed to send email via Nodemailer: " + (error as Error).message);
   }
 }
 
