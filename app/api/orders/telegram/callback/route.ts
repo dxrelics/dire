@@ -24,7 +24,7 @@ const transporter = nodemailer.createTransport({
 // Fungsi untuk mengirim email menggunakan Nodemailer
 async function sendEmail(to: string, subject: string, html: string) {
   const mailOptions = {
-    from: "Dire Tracksuit <your.email@gmail.com>", // Ganti dengan email kamu
+    from: "Dire Tracksuit direfightwear@gmail.com", // Ganti dengan email kamu
     to,
     subject,
     html,
@@ -32,6 +32,7 @@ async function sendEmail(to: string, subject: string, html: string) {
 
   try {
     await transporter.sendMail(mailOptions);
+    console.log(`Email successfully sent to ${to} with subject: ${subject}`);
   } catch (error) {
     throw new Error("Failed to send email via Nodemailer: " + (error as Error).message);
   }
@@ -46,7 +47,7 @@ async function editTelegramMessage(chatId: string, messageId: number, text: stri
   }
 
   const telegramUrl = `https://api.telegram.org/bot${botToken}/editMessageText`;
-  await fetch(telegramUrl, {
+  const response = await fetch(telegramUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -56,25 +57,41 @@ async function editTelegramMessage(chatId: string, messageId: number, text: stri
       parse_mode: "Markdown",
     }),
   });
+
+  if (!response.ok) {
+    throw new Error("Failed to edit Telegram message: " + response.statusText);
+  }
+
+  console.log(`Telegram message updated for chat ${chatId}, message ${messageId}`);
+}
+
+// Handler GET untuk debugging
+export async function GET() {
+  return NextResponse.json({ message: "Telegram callback endpoint is active" }, { status: 200 });
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    console.log("Received Telegram callback:", JSON.stringify(body, null, 2));
+
     const callbackQuery = body.callback_query;
 
     if (!callbackQuery) {
+      console.log("No callback query found in request body");
       return NextResponse.json({ error: "No callback query found" }, { status: 400 });
     }
 
     const chatId = callbackQuery.message.chat.id;
     const messageId = callbackQuery.message.message_id;
     const callbackData = callbackQuery.data;
+    console.log(`Callback data received: ${callbackData}`);
 
     // Parse callback data (contoh: "confirm_KDF-12345" atau "reject_KDF-12345")
     const [action, orderNumber] = callbackData.split("_");
 
     if (!action || !orderNumber) {
+      console.log("Invalid callback data format");
       return NextResponse.json({ error: "Invalid callback data" }, { status: 400 });
     }
 
@@ -86,6 +103,7 @@ export async function POST(request: Request) {
       .single();
 
     if (fetchError || !order) {
+      console.log(`Order not found for order_number: ${orderNumber}`);
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
@@ -97,8 +115,11 @@ export async function POST(request: Request) {
       .eq("order_number", orderNumber);
 
     if (updateError) {
+      console.log(`Failed to update order status: ${updateError.message}`);
       return NextResponse.json({ error: "Failed to update order status" }, { status: 500 });
     }
+
+    console.log(`Order status updated to ${newStatus} for order_number: ${orderNumber}`);
 
     // Edit pesan Telegram untuk menunjukkan status terbaru
     const updatedMessage = `
@@ -152,6 +173,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ message: "Order status updated and email sent" }, { status: 200 });
   } catch (error) {
+    console.error("Error processing callback:", (error as Error).message);
     return NextResponse.json({ error: "Failed to process callback: " + (error as Error).message }, { status: 500 });
   }
 }

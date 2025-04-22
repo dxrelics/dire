@@ -1,53 +1,33 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import rateLimit from "express-rate-limit";
 
 // Ambil environment variables
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Validasi environment variables untuk Supabase
+console.log("Checking Supabase environment variables...");
 if (!supabaseUrl || !supabaseServiceKey) {
+  console.error("Missing Supabase environment variables!");
   throw new Error("Missing Supabase environment variables. Please check NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local");
 }
 
 // Inisialisasi Supabase client
+console.log("Initializing Supabase client...");
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-// Konfigurasi rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 menit
-  max: 5, // Maksimal 5 request per IP dalam 15 menit
-  keyGenerator: (req) => {
-    return req.headers.get("x-forwarded-for") || "unknown-ip"; // Gunakan IP dari header
-  },
-  handler: () => {
-    return NextResponse.json({ error: "Too many requests, please try again later" }, { status: 429 });
-  },
-});
-
-// Middleware untuk menjalankan rate limiting di Next.js API Route
-const applyRateLimit = async (req: Request) => {
-  return new Promise<NextResponse | null>((resolve) => {
-    limiter(req as any, {} as any, (result: any) => {
-      if (result instanceof NextResponse) {
-        resolve(result);
-      } else {
-        resolve(null);
-      }
-    });
-  });
-};
 
 // Fungsi untuk mengirim notifikasi ke Telegram dengan tombol inline
 async function sendTelegramNotification(order: any, paymentProofUrl: string) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
 
-  // Validasi environment variables untuk Telegram
+  console.log("Checking Telegram environment variables...");
   if (!botToken || !chatId) {
+    console.error("Missing Telegram environment variables!");
     throw new Error("Missing Telegram environment variables. Please check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.local");
   }
+
+  console.log(`Sending Telegram notification for order ${order.order_number}`);
 
   const message = `
 🎉 *New Order Alert!* 🎉  
@@ -83,17 +63,16 @@ async function sendTelegramNotification(order: any, paymentProofUrl: string) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to send Telegram notification");
+    const errorText = await response.text();
+    console.error("Failed to send Telegram notification:", errorText);
+    throw new Error("Failed to send Telegram notification: " + errorText);
   }
+
+  console.log(`Telegram notification sent for order ${order.order_number}`);
 }
 
 export async function POST(request: Request) {
-  // Terapkan rate limiting
-  const rateLimitResponse = await applyRateLimit(request);
-  if (rateLimitResponse) {
-    return rateLimitResponse;
-  }
-
+  console.log("Received POST request to /api/orders");
   try {
     const formData = await request.formData();
     const orderNumber = formData.get("orderNumber") as string;
@@ -108,25 +87,49 @@ export async function POST(request: Request) {
     const amount = parseFloat(formData.get("amount") as string);
     const paymentProof = formData.get("paymentProof") as File;
 
+    console.log("Received form data:", {
+      orderNumber,
+      firstName,
+      lastName,
+      email,
+      phone,
+      address,
+      city,
+      state,
+      zipCode,
+      amount,
+      paymentProof: paymentProof ? paymentProof.name : null,
+    });
+
     // Validasi semua field yang dibutuhkan
     if (!orderNumber || !firstName || !lastName || !email || !phone || !address || !city || !state || !zipCode || !amount || !paymentProof) {
+      console.log("Validation failed: Missing required fields");
       return NextResponse.json({ error: "All fields are required, including payment proof" }, { status: 400 });
     }
 
     // Validasi format email sederhana
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
+      console.log("Validation failed: Invalid email format");
       return NextResponse.json({ error: "Invalid email format" }, { status: 400 });
+    }
+
+    // Validasi amount adalah angka
+    if (isNaN(amount)) {
+      console.log("Validation failed: Amount is not a valid number");
+      return NextResponse.json({ error: "Amount must be a valid number" }, { status: 400 });
     }
 
     // Upload payment proof ke Supabase Storage
     let paymentProofUrl = null;
     if (paymentProof) {
+      console.log(`Uploading payment proof: ${orderNumber}-${paymentProof.name}`);
       const { data, error: uploadError } = await supabase.storage
         .from("payment-proofs")
         .upload(`${orderNumber}-${paymentProof.name}`, paymentProof);
 
       if (uploadError) {
+        console.error("Failed to upload payment proof:", uploadError.message);
         return NextResponse.json({ error: uploadError.message }, { status: 500 });
       }
 
@@ -134,38 +137,48 @@ export async function POST(request: Request) {
         .from("payment-proofs")
         .getPublicUrl(`${orderNumber}-${paymentProof.name}`);
       paymentProofUrl = publicUrlData.publicUrl;
+      console.log(`Payment proof uploaded, public URL: ${paymentProofUrl}`);
     }
 
+    // Data yang akan disimpan ke Supabase
+    const orderData = {
+      order_number: orderNumber,
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      phone,
+      address,
+      city,
+      state,
+      zip_code: zipCode,
+      amount,
+      payment_proof_url: paymentProofUrl,
+      status: "pending",
+      created_at: new Date().toISOString(),
+    };
+
+    console.log("Data to insert into Supabase:", orderData);
+
     // Simpan data ke tabel 'orders' di Supabase
-    const { data, error } = await supabase.from("orders").insert([
-      {
-        order_number: orderNumber,
-        first_name: firstName,
-        last_name: lastName,
-        email,
-        phone,
-        address,
-        city,
-        state,
-        zip_code: zipCode,
-        amount,
-        payment_proof_url: paymentProofUrl,
-        status: "pending",
-        created_at: new Date().toISOString(),
-      },
-    ]).select();
+    console.log("Inserting order into Supabase...");
+    const { data, error } = await supabase.from("orders").insert([orderData]).select();
 
     if (error) {
+      console.error("Failed to insert order into Supabase:", error.message);
       return NextResponse.json({ error: `Failed to save order: ${error.message}` }, { status: 500 });
     }
 
     const order = data[0];
+    console.log("Inserted order from Supabase:", order);
 
     // Kirim notifikasi ke Telegram
+    console.log("Sending Telegram notification...");
     await sendTelegramNotification(order, paymentProofUrl!);
 
+    console.log("Order processed successfully!");
     return NextResponse.json({ message: "Order saved successfully", data: order }, { status: 200 });
   } catch (error) {
+    console.error("Error in /api/orders:", (error as Error).message);
     return NextResponse.json({ error: "Failed to save order: " + (error as Error).message }, { status: 500 });
   }
 }
