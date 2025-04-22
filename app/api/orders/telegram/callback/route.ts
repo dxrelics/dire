@@ -24,7 +24,7 @@ const transporter = nodemailer.createTransport({
 // Fungsi untuk mengirim email menggunakan Nodemailer
 async function sendEmail(to: string, subject: string, html: string) {
   const mailOptions = {
-    from: "Dire Tracksuit direfightwear@gmail.com", // Ganti dengan email kamu
+    from: "Dire Tracksuit direfightwear@gmail.com",
     to,
     subject,
     html,
@@ -63,6 +63,32 @@ async function editTelegramMessage(chatId: string, messageId: number, text: stri
   }
 
   console.log(`Telegram message updated for chat ${chatId}, message ${messageId}`);
+}
+
+// Fungsi untuk mengirim notifikasi baru ke Telegram
+async function sendTelegramNotification(chatId: string, text: string) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!botToken) {
+    throw new Error("Missing Telegram bot token. Please check TELEGRAM_BOT_TOKEN in .env.local");
+  }
+
+  const telegramUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const response = await fetch(telegramUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: "Markdown",
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to send Telegram notification: " + response.statusText);
+  }
+
+  console.log(`Telegram notification sent to chat ${chatId}`);
 }
 
 // Handler GET untuk debugging
@@ -146,7 +172,7 @@ export async function POST(request: Request) {
           <p>Hi ${order.first_name},</p>
           <p>We’re excited to let you know that your order has been confirmed! Your Dire Khadaffi Track Suit will be shipped soon.</p>
           <h3>Order Details</h3>
-          <p><strong>Order Number:</strong> ${order.order_number}</p>
+          <p><strong>Order Number:</strongcsuit</strong> ${order.order_number}</p>
           <p><strong>Product:</strong> Dire Khadaffi Track Suit</p>
           <p><strong>Amount:</strong> Rp ${order.amount.toLocaleString()}</p>
           <p><strong>Shipping Address:</strong> ${order.address}, ${order.city}, ${order.state} ${order.zip_code}</p>
@@ -170,6 +196,16 @@ export async function POST(request: Request) {
       `;
 
     await sendEmail(order.email, emailSubject, emailHtml);
+
+    // Kirim notifikasi tambahan ke Telegram setelah email terkirim
+    if (action === "confirm") {
+      const confirmationMessage = `
+✅ *Order Confirmed!*  
+📦 *Order Number:* \`${order.order_number}\`  
+Email konfirmasi telah dikirim ke *${order.email}*.
+      `;
+      await sendTelegramNotification(chatId, confirmationMessage);
+    }
 
     return NextResponse.json({ message: "Order status updated and email sent" }, { status: 200 });
   } catch (error) {
